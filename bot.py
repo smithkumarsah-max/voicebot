@@ -1,23 +1,22 @@
 import os
 import asyncio
+import json
+import subprocess
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pytgcalls import PyTgCalls
-from pytgcalls.types import MediaStream
-import json
 
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "0"))
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 
 app = Client("voicebot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-call_py = PyTgCalls(app)
 
 playlist = []
 current_index = 0
 is_playing = False
+stream_process = None
 
 def save_playlist():
     with open("playlist.json", "w") as f:
@@ -34,9 +33,8 @@ def load_playlist():
 def main_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Playlist", callback_data="playlist"),
-         InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
-        [InlineKeyboardButton("🎙 Live Control", callback_data="live_control"),
          InlineKeyboardButton("📊 Status", callback_data="status")],
+        [InlineKeyboardButton("🎙 Live Control", callback_data="live_control")],
         [InlineKeyboardButton("🔄 Restart", callback_data="restart")]
     ])
 
@@ -44,8 +42,7 @@ def live_control_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Play", callback_data="play"),
          InlineKeyboardButton("⏹ Stop", callback_data="stop")],
-        [InlineKeyboardButton("⏭ Next", callback_data="next"),
-         InlineKeyboardButton("🔁 Replay", callback_data="replay")],
+        [InlineKeyboardButton("⏭ Next", callback_data="next")],
         [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
     ])
 
@@ -89,7 +86,6 @@ async def receive_audio(client, message: Message):
         f"✅ **Added:**\n🎵 {audio_name}\n\nPlaylist mein total: {len(playlist)} audio",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Abhi Play Karein", callback_data="play")],
-            [InlineKeyboardButton("➕ Aur Add Karein", callback_data="add_audio")],
             [InlineKeyboardButton("🔙 Main Menu", callback_data="back_main")]
         ])
     )
@@ -129,3 +125,46 @@ async def callbacks(client, query):
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 Back", callback_data="playlist")]
             ])
+        )
+    elif data == "clear_all":
+        playlist = []
+        save_playlist()
+        await query.message.edit_text("🗑 Playlist clear ho gayi!", reply_markup=playlist_menu())
+    elif data == "live_control":
+        status = "🟢 Playing" if is_playing else "🔴 Stopped"
+        await query.message.edit_text(
+            f"🎙 **LIVE CONTROL**\n\nStatus: {status}\nPlaylist: {len(playlist)} audio",
+            reply_markup=live_control_menu()
+        )
+    elif data == "play":
+        load_playlist()
+        if not playlist:
+            await query.answer("❌ Playlist khaali hai!", show_alert=True)
+            return
+        await query.answer("▶️ Starting...")
+        await query.message.edit_text("▶️ Stream shuru ho raha hai...", reply_markup=live_control_menu())
+        is_playing = True
+    elif data == "stop":
+        is_playing = False
+        await query.message.edit_text("⏹ Stream band ho gaya!", reply_markup=main_menu())
+    elif data == "next":
+        current_index = (current_index + 1) % len(playlist) if playlist else 0
+        await query.answer(f"⏭ Next: {playlist[current_index]['name']}" if playlist else "Playlist khaali!")
+    elif data == "status":
+        status = "🟢 Live Chal Raha Hai" if is_playing else "🔴 Band Hai"
+        current = playlist[current_index]['name'] if playlist and is_playing else "Kuch nahi"
+        await query.message.edit_text(
+            f"📊 **STATUS**\n\n🎙 Stream: {status}\n🎵 Current: {current}\n📋 Playlist: {len(playlist)} audio",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
+            ])
+        )
+    elif data == "restart":
+        await query.answer("🔄 Restarting...")
+        is_playing = False
+        await asyncio.sleep(1)
+        is_playing = True
+        await query.message.edit_text("🔄 Restarted!", reply_markup=main_menu())
+
+load_playlist()
+app.run()
